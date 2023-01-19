@@ -69,6 +69,27 @@ impl Camera
 
 		camera_rotation.mul(&camera_translation)
 	}
+
+	/*pub fn calculate_frustum(&self) -> Frustum
+	{
+		let projection_matrix: Matrix4 = self.projection_matrix().transpose();
+		
+		// Extract the column vectors of the projection matrix
+		let col0 = projection_matrix.column(0).xyz();
+		let col1 = projection_matrix.column(1).xyz();
+		let col2 = projection_matrix.column(2).xyz();
+		let col3 = projection_matrix.column(3).xyz();
+
+		// Compute the equations of the left, right, top, bottom, near, and far planes
+		let left = Plane::from_point_normal(Vector3::zero(), col3 + col0); // Left plane
+		let right = Plane::from_point_normal(Vector3::zero(), col3 - col0); // Right plane
+		let top = Plane::from_point_normal(Vector3::zero(), col3 + col1); // Top plane
+		let bottom = Plane::from_point_normal(Vector3::zero(), col3 - col1); // Bottom plane
+		let near = Plane::from_point_normal(Vector3::zero(), col3 + col2); // Near plane
+		let far = Plane::from_point_normal(Vector3::zero(), col3 - col2); // Far plane
+
+		Frustum { left, right, bottom, top, near, far }
+	}*/
 }
 
 #[repr(C)]
@@ -264,6 +285,25 @@ impl Vector3
 		return Vector3 { x, y, z };
 	}
 
+	pub fn magnitude(&self) -> f32
+	{
+		self.dot(self).sqrt()
+	}
+
+	pub fn distance(&self, r: &Vector3) -> f32
+	{
+		let dist_x: f32 = self.x - r.x;
+		let dist_y: f32 = self.y - r.y;
+		let dist_z: f32 = self.z - r.z;
+
+		((dist_x * dist_x) + (dist_y * dist_y) + (dist_z * dist_z)).sqrt()
+	}
+
+	pub fn reflect(&self, r: &Vector3) -> Self
+	{
+		self.sub(&r.mulf(2.0 * self.dot(&r)))
+	}
+
 	pub fn rotate_from_vector(&self, axis: &Vector3, angle: f32) -> Vector3
 	{
 		let sin_angle: f32 = (-angle).sin();
@@ -288,6 +328,64 @@ impl Vector3
 		Vector3::new(w.x, w.y, w.z)
 	}
 
+	pub fn to_euler_rotation_matrix3(&self) -> Matrix3
+	{
+		let cx = self.x.cos();
+		let cy = self.y.cos();
+		let cz = self.z.cos();
+		let sx = self.x.sin();
+		let sy = self.y.sin();
+		let sz = self.z.sin();
+
+		let rx =
+		[
+			[ 1.0, 0.0, 0.0 ],
+			[ 0.0, cx, -sx ],
+			[ 0.0, sx, cx ]
+		];
+
+		let ry =
+		[
+			[ cy, 0.0, sy ],
+			[ 0.0, 1.0, 0.0 ],
+			[ -sy, 0.0, cy ]
+		];
+
+		let rz =
+		[
+			[ cz, -sz, 0.0 ],
+			[ sz, cz, 0.0 ],
+			[ 0.0, 0.0, 1.0 ]
+		];
+
+		let mut res = [[0.0; 3]; 3];
+		for i in 0..3
+		{
+			for j in 0..3
+			{
+				res[i][j] = rx[i][0] * ry[0][j] + rx[i][1] * ry[1][j] + rx[i][2] * ry[2][j];
+			}
+		}
+
+		for i in 0..3
+		{
+			for j in 0..3
+			{
+				res[i][j] = res[i][0] * rz[0][j] + res[i][1] * rz[1][j] + res[i][2] * rz[2][j];
+			}
+		}
+
+		Matrix3 { val: res }
+	}
+
+	fn rotate_matrix3(&self, matrix: &Matrix3) -> Self
+	{
+		let x: f32 = self.x * matrix.val[0][0] + self.y * matrix.val[0][1] + self.z * matrix.val[0][2];
+		let y: f32 = self.x * matrix.val[1][0] + self.y * matrix.val[1][1] + self.z * matrix.val[1][2];
+		let z: f32 = self.x * matrix.val[2][0] + self.y * matrix.val[2][1] + self.z * matrix.val[2][2];
+		Vector3 { x, y, z }
+	}
+
 	pub fn lerp(&self, dest: &Vector3, factor: f32) -> Self
 	{
 		dest.sub(self).mulf(factor).add(self)
@@ -296,6 +394,26 @@ impl Vector3
 	pub fn abs(&self) -> Self
 	{
 		Vector3::new(self.x.abs(), self.y.abs(), self.z.abs())
+	}
+
+	pub fn atan(&self, r: &Vector3) -> Self
+	{
+		Self
+		{
+			x: self.x.atan2(r.x),
+			y: self.y.atan2(r.y),
+			z: self.z.atan2(r.z)
+		}
+	}
+
+	pub fn to_radians(&self) -> Self
+	{
+		Self
+		{
+			x: self.x.to_radians(),
+			y: self.y.to_radians(),
+			z: self.z.to_radians()
+		}
 	}
 
 	pub fn add(&self, r: &Vector3) -> Self
@@ -387,9 +505,48 @@ impl Vector3
 		}
 	}
 
+	pub fn get_forward(&self) -> Self
+	{
+		let yaw: f32 = self.x.to_radians();
+		let pitch: f32 = self.y.to_radians();
+		let roll: f32 = self.z.to_radians();
+
+		Self
+		{
+			x: roll.sin() * pitch.sin() + roll.cos() * yaw.sin() * pitch.cos(),
+			y: -roll.cos() * pitch.sin() + roll.sin() * yaw.sin() * pitch.cos(),
+			z: yaw.cos() * pitch.cos()
+		}.normalized()
+	}
+
+	pub fn to_normalized_direction(&self) -> Self
+	{
+		let (yaw, pitch, roll) = (self.x, self.y, self.z);
+		let x: f32 = pitch.sin() * yaw.cos();
+    	let y: f32 = pitch.sin() * yaw.sin();
+    	let z: f32 = pitch.cos();
+		Self { x, y, z }.normalized()
+	}
+
 	pub fn print(&self)
 	{
 		println!("{} {} {}", self.x, self.y, self.z);
+	}
+}
+
+impl std::ops::Index<usize> for Vector3
+{
+	type Output = f32;
+
+	fn index(&self, index: usize) -> &Self::Output
+	{
+		match index
+		{
+			0 => &self.x,
+			1 => &self.y,
+			2 => &self.z,
+			_ => { panic!("Invalid index!"); }
+		}
 	}
 }
 
@@ -449,6 +606,21 @@ impl std::ops::Sub<f32> for Vector3
 			x: self.x - r,
 			y: self.y - r,
 			z: self.z - r
+		}
+	}
+}
+
+impl std::ops::Sub<Vector3> for f32
+{
+	type Output = Vector3;
+
+	fn sub(self, r: Vector3) -> Vector3
+	{
+		Vector3
+		{
+			x: self - r.x,
+			y: self - r.y,
+			z: self - r.z
 		}
 	}
 }
@@ -540,6 +712,136 @@ impl Vector4
 			w: 0.0
 		}
 	}
+
+	pub fn addf(&self, f: f32) -> Self
+	{
+		Self
+		{
+			x: self.x + f,
+			y: self.y + f,
+			z: self.z + f,
+			w: self.w + f
+		}
+	}
+
+	pub fn subf(&self, f: f32) -> Self
+	{
+		Self
+		{
+			x: self.x - f,
+			y: self.y - f,
+			z: self.z - f,
+			w: self.w - f
+		}
+	}
+
+	pub fn mulf(&self, f: f32) -> Self
+	{
+		Self
+		{
+			x: self.x * f,
+			y: self.y * f,
+			z: self.z * f,
+			w: self.w * f
+		}
+	}
+
+	pub fn divf(&self, f: f32) -> Self
+	{
+		Self
+		{
+			x: self.x / f,
+			y: self.y / f,
+			z: self.z / f,
+			w: self.w / f
+		}
+	}
+
+	pub fn xyz(&self) -> Vector3
+	{
+		Vector3 { x: self.x, y: self.y, z: self.z }
+	}
+}
+
+impl std::ops::Index<usize> for Vector4
+{
+	type Output = f32;
+
+	fn index(&self, index: usize) -> &Self::Output
+	{
+		match index
+		{
+			0 => &self.x,
+			1 => &self.y,
+			2 => &self.z,
+			3 => &self.w,
+			_ => { panic!("Invalid index!"); }
+		}
+	}
+}
+
+impl std::ops::Add<Vector4> for Vector4
+{
+	type Output = Vector4;
+
+	fn add(self, r: Vector4) -> Vector4
+	{
+		Vector4
+		{
+			x: self.x + r.x,
+			y: self.y + r.y,
+			z: self.z + r.z,
+			w: self.w + r.w
+		}
+	}
+}
+
+impl std::ops::Sub<Vector4> for Vector4
+{
+	type Output = Vector4;
+
+	fn sub(self, r: Vector4) -> Vector4
+	{
+		Vector4
+		{
+			x: self.x - r.x,
+			y: self.y - r.y,
+			z: self.z - r.z,
+			w: self.w - r.w
+		}
+	}
+}
+
+impl std::ops::Mul<Vector4> for Vector4
+{
+	type Output = Vector4;
+
+	fn mul(self, r: Vector4) -> Vector4
+	{
+		Vector4
+		{
+			x: self.x * r.x,
+			y: self.y * r.y,
+			z: self.z * r.z,
+			w: self.w * r.w
+		}
+	}
+}
+
+impl std::ops::Div<Vector4> for Vector4
+{
+	type Output = Vector4;
+
+	fn div(self, r: Vector4) -> Vector4
+	{
+		Vector4
+		{
+			x: self.x / r.x,
+			y: self.y / r.y,
+			z: self.z / r.z,
+			w: self.w / r.w
+		}
+	}
 }
 
 #[repr(C)]
@@ -570,6 +872,72 @@ impl Quaternion
 			y: axis.y * sin_half_angle,
 			z: axis.z * sin_half_angle,
 			w: cos_half_angle
+		}
+	}
+
+	pub fn from_rotation_x(angle: f32) -> Self
+	{
+		Self::from_axis(&Vector3::new(1.0, 0.0, 0.0), angle)
+	}
+
+	pub fn from_rotation_y(angle: f32) -> Self
+	{
+		Self::from_axis(&Vector3::new(0.0, 1.0, 0.0), angle)
+	}
+
+	pub fn from_rotation_z(angle: f32) -> Self
+	{
+		Self::from_axis(&Vector3::new(0.0, 0.0, 1.0), angle)
+	}
+
+	pub fn yaw(&self) -> f32
+	{
+		let test: f32 = self.x * self.y + self.z * self.w;
+		if test > 0.499
+		{
+			2.0 * (self.x * self.z - self.y * self.w).atan()
+		}
+		else if test < -0.499
+		{
+			-2.0 * (self.x * self.z - self.y * self.w).atan()
+		}
+		else
+		{
+			(self.x * self.w + self.y * self.z).atan2(1.0 - 2.0 * (self.x * self.x + self.y * self.y))
+		}
+	}
+
+	pub fn to_euler_vector3(&self) -> Vector3
+	{
+		let sqrx: f32 = self.x * self.x;
+		let sqry: f32 = self.y * self.y;
+		let sqrz: f32 = self.z * self.z;
+		let sqrw: f32 = self.w * self.w;
+
+		Vector3
+		{
+			x: (-2.0 * (self.x * self.z - self.y * self.w)).asin(),
+			y: ( 2.0 * (self.y * self.z + self.x * self.w)).atan2(-sqrx - sqry + sqrz + sqrw),
+			z: ( 2.0 * (self.x * self.y + self.z * self.w)).atan2( sqrx - sqry - sqrz + sqrw)
+		}
+	}
+
+	pub fn from_euler_vector3(r: &Vector3) -> Self
+	{
+		let fc1: f32 = (r.z / 2.0).cos();
+		let fc2: f32 = (r.x / 2.0).cos();
+		let fc3: f32 = (r.y / 2.0).cos();
+
+		let fs1: f32 = (r.z / 2.0).sin();
+		let fs2: f32 = (r.x / 2.0).sin();
+		let fs3: f32 = (r.y / 2.0).sin();
+
+		Self
+		{
+			x: fc1 * fc2 * fs3 - fs1 * fs2 * fc3,
+			y: fc1 * fs2 * fc3 + fs1 * fc2 * fs3,
+			z: fs1 * fc2 * fc3 - fc1 * fs2 * fs3,
+			w: fc1 * fc2 * fc3 + fs1 * fs2 * fs3
 		}
 	}
 
@@ -797,6 +1165,72 @@ impl Quaternion
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub struct Matrix3
+{
+	pub val: [[f32; 3]; 3]
+}
+
+impl Matrix3
+{
+	pub fn new(xx: f32, xy: f32, xz: f32,
+		yx: f32, yy: f32, yz: f32,
+		zx: f32, zy: f32, zz: f32) -> Self
+	{
+		let val: [[f32; 3]; 3] =
+		[
+			[ xx, xy, xz ],
+			[ yx, yy, yz ],
+			[ zx, zy, zz ]
+		];
+
+		Self { val }
+	}
+
+	pub fn from_array(values: &[f32; 9]) -> Self
+	{
+		let val: [[f32; 3]; 3] =
+		[
+			[ values[0], values[1], values[2] ],
+			[ values[3], values[4], values[5] ],
+			[ values[6], values[7], values[8] ]
+		];
+
+		Self { val }
+	}
+
+	pub fn identity(&self) -> Self
+	{
+		let val: [[f32; 3]; 3] =
+		[
+			[ 1.0, 0.0, 0.0 ],
+			[ 0.0, 1.0, 0.0 ],
+			[ 0.0, 0.0, 1.0 ],
+		];
+
+		Self { val }
+	}
+
+	pub fn transpose(&self) -> Self
+	{
+		let val: [[f32; 3]; 3] =
+		[
+			[ self.val[0][0], self.val[1][0], self.val[2][0] ],
+			[ self.val[0][1], self.val[1][1], self.val[2][1] ],
+			[ self.val[0][2], self.val[1][2], self.val[2][2] ],
+		];
+
+		Self { val }
+	}
+
+	pub fn det(&self) -> f32
+	{
+		(self.val[0][0] * self.val[1][1] * self.val[2][2]) + (self.val[0][1] * self.val[1][2] * self.val[2][0]) + (self.val[0][2] * self.val[1][0] * self.val[2][1]) -
+        (self.val[0][2] * self.val[1][1] * self.val[2][0]) - (self.val[0][1] * self.val[1][0] * self.val[2][2]) - (self.val[0][0] * self.val[1][2] * self.val[2][1])
+	}
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct Matrix4
 {
 	pub val: [[f32; 4]; 4]
@@ -884,6 +1318,7 @@ impl Matrix4
 		Self { val }
 	}
 
+	// note: this is in row-major order
 	pub fn init_perspective(fov: f32, aspect: f32, z_near: f32, z_far: f32) -> Self
 	{
 		let tan_half_fov = ((fov / 2.0).to_radians()).tan();
@@ -900,6 +1335,7 @@ impl Matrix4
 		Self { val }
 	}
 
+	// note: this is in row-major order
 	pub fn init_orthographic(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Self
 	{
 		let width = right - left;
@@ -964,6 +1400,23 @@ impl Matrix4
 		Self { val }
 	}
 
+	pub fn init_billboard(pos: &Vector3, camera_pos: &Vector3) -> Self
+	{
+		let look = camera_pos.sub(pos).normalized();
+		let up = Vector3::new(0.0, 1.0, 0.0).normalized();
+		let right = up.cross(&look).normalized();
+
+		let val: [[f32; 4]; 4] =
+		[
+			[ right.x, right.y, right.z, 0.0 ],
+			[ up.x,    up.y,    up.z,    0.0 ],
+			[ look.x,  look.y,  look.z,  0.0 ],
+			[ pos.x,   pos.y,   pos.z,   1.0 ]
+		];
+
+		Self { val }
+	}
+
 	pub fn get(&self, i: usize, j: usize) -> f32
 	{
 		self.val[i][j]
@@ -972,6 +1425,24 @@ impl Matrix4
 	pub fn set(&mut self, i: usize, j: usize, val: f32)
 	{
 		self.val[i][j] = val;
+	}
+
+	pub fn column(&self, index: usize) -> Vector4
+	{
+        Vector4::new(self.val[0][index], self.val[1][index], self.val[2][index], self.val[3][index])
+    }
+
+	pub fn transpose(&self) -> Self
+	{
+		let val: [[f32; 4]; 4] =
+		[
+			[ self.val[0][0], self.val[1][0], self.val[2][0], self.val[3][0] ],
+			[ self.val[0][1], self.val[1][1], self.val[2][1], self.val[3][1] ],
+			[ self.val[0][2], self.val[1][2], self.val[2][2], self.val[3][2] ],
+			[ self.val[0][3], self.val[1][3], self.val[2][3], self.val[3][3] ]
+		];
+
+		Self { val }
 	}
 
 	pub fn transform(&self, r: &Vector3) -> Vector3
@@ -1002,9 +1473,73 @@ impl Matrix4
 		result
 	}
 
+	pub fn mul_vec3(&self, v: &Vector3) -> Vector3
+	{
+		todo!()
+	}
+
+	pub fn det(&self) -> f32
+	{
+		let cofact_xx: f32 =  (Matrix3::new(self.val[1][1], self.val[1][2], self.val[1][3], self.val[2][1], self.val[2][2], self.val[2][3], self.val[3][1], self.val[3][2], self.val[3][3])).det();
+		let cofact_xy: f32 = -(Matrix3::new(self.val[1][0], self.val[1][2], self.val[1][3], self.val[2][0], self.val[2][2], self.val[2][3], self.val[3][0], self.val[3][2], self.val[3][3])).det();
+		let cofact_xz: f32 =  (Matrix3::new(self.val[1][0], self.val[1][1], self.val[1][3], self.val[2][0], self.val[2][1], self.val[2][3], self.val[3][0], self.val[3][1], self.val[3][3])).det();
+		let cofact_xw: f32 = -(Matrix3::new(self.val[1][0], self.val[1][1], self.val[1][2], self.val[2][0], self.val[2][1], self.val[2][2], self.val[3][0], self.val[3][1], self.val[3][2])).det();
+		
+		return (cofact_xx * self.val[0][0]) + (cofact_xy * self.val[0][1]) + (cofact_xz * self.val[0][2]) + (cofact_xw * self.val[0][3]);
+	}
+
+	pub fn inverse(&self) -> Self
+	{
+		let det: f32 = self.det();
+		let fac: f32 = 1.0 / det;
+
+		let val: [[f32; 4]; 4] =
+		[
+			[
+				fac *  (Matrix3::new(self.val[1][1], self.val[1][2], self.val[1][3], self.val[2][1], self.val[2][2], self.val[2][3], self.val[3][1], self.val[3][2], self.val[3][3])).det(),
+				fac * -(Matrix3::new(self.val[1][0], self.val[1][2], self.val[1][3], self.val[2][0], self.val[2][2], self.val[2][3], self.val[3][0], self.val[3][2], self.val[3][3])).det(),
+				fac *  (Matrix3::new(self.val[1][0], self.val[1][1], self.val[1][3], self.val[2][0], self.val[2][1], self.val[2][3], self.val[3][0], self.val[3][1], self.val[3][3])).det(),
+				fac * -(Matrix3::new(self.val[1][0], self.val[1][1], self.val[1][2], self.val[2][0], self.val[2][1], self.val[2][2], self.val[3][0], self.val[3][1], self.val[3][2])).det()
+			],
+
+			[
+				fac * -(Matrix3::new(self.val[0][1], self.val[0][2], self.val[0][3], self.val[2][1], self.val[2][2], self.val[2][3], self.val[3][1], self.val[3][2], self.val[3][3])).det(),
+				fac *  (Matrix3::new(self.val[0][0], self.val[0][2], self.val[0][3], self.val[2][0], self.val[2][2], self.val[2][3], self.val[3][0], self.val[3][2], self.val[3][3])).det(),
+				fac * -(Matrix3::new(self.val[0][0], self.val[0][1], self.val[0][3], self.val[2][0], self.val[2][1], self.val[2][3], self.val[3][0], self.val[3][1], self.val[3][3])).det(),
+				fac *  (Matrix3::new(self.val[0][0], self.val[0][1], self.val[0][2], self.val[2][0], self.val[2][1], self.val[2][2], self.val[3][0], self.val[3][1], self.val[3][2])).det()
+			],
+
+			[
+				fac *  (Matrix3::new(self.val[0][1], self.val[0][2], self.val[0][3], self.val[1][1], self.val[1][2], self.val[1][3], self.val[3][1], self.val[3][2], self.val[3][3])).det(),
+				fac * -(Matrix3::new(self.val[0][0], self.val[0][2], self.val[0][3], self.val[1][0], self.val[1][2], self.val[1][3], self.val[3][0], self.val[3][2], self.val[3][3])).det(),
+				fac *  (Matrix3::new(self.val[0][0], self.val[0][1], self.val[0][3], self.val[1][0], self.val[1][1], self.val[1][3], self.val[3][0], self.val[3][1], self.val[3][3])).det(),
+				fac * -(Matrix3::new(self.val[0][0], self.val[0][1], self.val[0][2], self.val[1][0], self.val[1][1], self.val[1][2], self.val[3][0], self.val[3][1], self.val[3][2])).det()
+			],
+
+			[
+				fac * -(Matrix3::new(self.val[0][1], self.val[0][2], self.val[0][3], self.val[1][1], self.val[1][2], self.val[1][3], self.val[2][1], self.val[2][2], self.val[2][3])).det(),
+				fac *  (Matrix3::new(self.val[0][0], self.val[0][2], self.val[0][3], self.val[1][0], self.val[1][2], self.val[1][3], self.val[2][0], self.val[2][2], self.val[2][3])).det(),
+				fac * -(Matrix3::new(self.val[0][0], self.val[0][1], self.val[0][3], self.val[1][0], self.val[1][1], self.val[1][3], self.val[2][0], self.val[2][1], self.val[2][3])).det(),
+				fac *  (Matrix3::new(self.val[0][0], self.val[0][1], self.val[0][2], self.val[1][0], self.val[1][1], self.val[1][2], self.val[2][0], self.val[2][1], self.val[2][2])).det()
+			]
+		];
+
+		Self { val }
+	}
+
 	pub fn get_ptr(&self) -> *const f32
 	{
 		self.val.as_ptr() as *const f32
+	}
+
+	pub fn to_array(&self) -> [f32; 16]
+	{
+		[
+			self.val[0][0], self.val[0][1], self.val[0][2], self.val[0][3],
+			self.val[1][0], self.val[1][1], self.val[1][2], self.val[1][3],
+			self.val[2][0], self.val[2][1], self.val[2][2], self.val[2][3],
+			self.val[3][0], self.val[3][1], self.val[3][2], self.val[3][3]
+		]
 	}
 }
 
@@ -1273,5 +1808,233 @@ impl SimplexNoise
 		}
 
 		40.0 * (n0 + n1 + n2)
+	}
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+pub struct AxisAlignedBoundingBox
+{
+	pub min: Vector3,
+	pub max: Vector3
+}
+
+impl AxisAlignedBoundingBox
+{
+	pub fn new(min: Vector3, max: Vector3) -> Self
+	{
+		Self { min, max }
+	}
+
+	pub fn translate(&self, x: f32, y: f32, z: f32) -> Self
+	{
+		Self
+		{
+			min: self.min.add(&Vector3::new(x, y, z)),
+			max: self.max.add(&Vector3::new(x, y, z))
+		}
+	}
+
+	pub fn intersects(&self, other: &AxisAlignedBoundingBox) -> bool
+	{
+		(self.min.x < other.max.x && self.max.x > other.min.x) &&
+			(self.min.y < other.max.y && self.max.y > other.min.y) &&
+			(self.min.z < other.max.z && self.max.z > other.min.z)
+	}
+
+	pub fn contains_point(&self, p: &Vector3) -> bool
+	{
+		(self.min.x < p.x && self.max.x > p.x) &&
+            (self.min.y < p.y && self.max.y > p.y) &&
+            (self.min.z < p.z && self.max.z > p.z)
+	}
+
+	pub fn clip_line(&self, d: usize, v0: &Vector3, v1: &Vector3, f_low: &mut f32, f_high: &mut f32) -> bool
+	{
+		let mut f_dim_low: f32 = (self.min[d] - v0[d]) / (v1[d] - v0[d]);
+		let mut f_dim_high: f32 = (self.max[d] - v0[d]) / (v1[d] - v0[d]);
+
+		if f_dim_high < f_dim_low
+		{
+			std::mem::swap(&mut f_dim_high, &mut f_dim_low);
+		}
+
+		if f_dim_high < *f_low
+		{
+			return false;
+		}
+
+		if f_dim_low > *f_high
+		{
+			return false;
+		}
+
+		*f_low = f_dim_low.max(*f_low);
+		*f_high = f_dim_high.max(*f_high);
+
+		if f_low > f_high
+		{
+			return false;
+		}
+
+		true
+	}
+
+	pub fn intersects_line(&self, v0: &Vector3, v1: &Vector3) -> bool
+	{
+		let mut f_low: f32 = 0.0;
+		let mut f_high: f32 = 1.0;
+
+		if !self.clip_line(0, v0, v1, &mut f_low, &mut f_high)
+		{
+			return false;
+		}
+
+		if !self.clip_line(1, v0, v1, &mut f_low, &mut f_high)
+		{
+			return false;
+		}
+
+		if !self.clip_line(2, v0, v1, &mut f_low, &mut f_high)
+		{
+			return false;
+		}
+
+		let b = v1.sub(v0);
+		let intersection = *v0 + b * f_low;
+
+		let fl_fraction = f_low;
+
+		true
+	}
+}
+
+pub fn get_closest_aabb(position: &Vector3, bounding_boxes: &[AxisAlignedBoundingBox]) -> AxisAlignedBoundingBox
+{
+	let mut bounding_boxes_sorted: Vec<AxisAlignedBoundingBox> = Vec::with_capacity(bounding_boxes.len());
+	for bounding_box in bounding_boxes
+	{
+		bounding_boxes_sorted.push(*bounding_box);
+	}
+
+	bounding_boxes_sorted.sort_by(|a, b|
+	{
+		let distance_a = ((a.min.add(&a.max)).divf(2.0)).sub(position);
+		let distance_b = ((b.min.add(&b.max)).divf(2.0)).sub(position);
+		distance_a.magnitude().partial_cmp(&distance_b.magnitude()).unwrap()
+	});
+
+	bounding_boxes_sorted[0]
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+pub struct RayHitResult
+{
+	pub intersects: bool,
+	pub t_min: f32,
+	pub t_max: f32
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+pub struct Ray
+{
+	pub origin: Vector3,
+	pub direction: Vector3
+}
+
+impl Ray
+{
+	pub fn new(origin: Vector3, direction: Vector3) -> Self
+	{
+		Self { origin, direction }
+	}
+
+pub fn intersects_aabb(&self, bounding_box: &AxisAlignedBoundingBox) -> RayHitResult
+{
+	let mut t_min: f32 = 0.0;
+	let mut t_max: f32 = std::f32::INFINITY;
+
+	for i in 0..3 as usize
+	{
+		let inv_d = 1.0 / self.direction[i];
+		let mut t0 = (bounding_box.min[i] - self.origin[i]) * inv_d;
+		let mut t1 = (bounding_box.max[i] - self.origin[i]) * inv_d;
+
+		if inv_d < 0.0
+		{
+			std::mem::swap(&mut t0, &mut t1);
+		}
+
+		t_min = t_min.max(t0);
+		t_max = t_max.min(t1);
+
+		if t_max <= t_min
+		{
+			return RayHitResult { intersects: false, t_min: 0.0, t_max: 0.0 };
+		}
+	}
+
+	RayHitResult { intersects: true, t_min, t_max }
+}
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+pub struct Plane
+{
+	pub normal: Vector3,
+	pub distance: f32
+}
+
+impl Default for Plane
+{
+	fn default() -> Self
+	{
+		Self { normal: Vector3::zero(), distance: 0.0 }
+	}
+}
+
+impl Plane
+{
+	pub fn new(normal: Vector3, distance: f32) -> Self
+	{
+		Self { normal, distance }
+	}
+
+	pub fn from_point_normal(point: Vector3, normal: Vector3) -> Self
+	{
+		let distance: f32 = -normal.x * point.x - normal.y * point.y - normal.z * point.z;
+        Self { normal, distance }
+	}
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+pub struct Frustum
+{
+	planes:	[Vector4; 6],
+}
+
+impl Frustum
+{
+	pub fn new() -> Self
+	{
+		Self { planes: [Vector4::zero(); 6] }
+	}
+
+	pub fn is_point_inside(&self, point: &Vector3) -> bool
+	{
+		for plane in self.planes
+		{
+			let d: f32 = point.dot(&plane.xyz()) + plane.w;
+			if d > 0.0
+			{
+				return false;
+			}
+		}
+
+		true
+	}
+
+	pub fn is_aabb_inside(&self, bounding_box: &AxisAlignedBoundingBox) -> bool
+	{
+		todo!()
 	}
 }
