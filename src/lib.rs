@@ -1,4 +1,4 @@
-use std::hash::{Hash, Hasher};
+use std::{hash::{Hash, Hasher}, ops::Mul};
 
 use rand::{SeedableRng, Rng};
 
@@ -70,26 +70,13 @@ impl Camera
 		camera_rotation.mul(&camera_translation)
 	}
 
-	/*pub fn calculate_frustum(&self) -> Frustum
+	pub fn calculate_frustum(&self) -> Frustum
 	{
-		let projection_matrix: Matrix4 = self.projection_matrix().transpose();
-		
-		// Extract the column vectors of the projection matrix
-		let col0 = projection_matrix.column(0).xyz();
-		let col1 = projection_matrix.column(1).xyz();
-		let col2 = projection_matrix.column(2).xyz();
-		let col3 = projection_matrix.column(3).xyz();
+		let projection_matrix = self.projection_matrix();
+		let view_matrix = self.view_matrix();
 
-		// Compute the equations of the left, right, top, bottom, near, and far planes
-		let left = Plane::from_point_normal(Vector3::zero(), col3 + col0); // Left plane
-		let right = Plane::from_point_normal(Vector3::zero(), col3 - col0); // Right plane
-		let top = Plane::from_point_normal(Vector3::zero(), col3 + col1); // Top plane
-		let bottom = Plane::from_point_normal(Vector3::zero(), col3 - col1); // Bottom plane
-		let near = Plane::from_point_normal(Vector3::zero(), col3 + col2); // Near plane
-		let far = Plane::from_point_normal(Vector3::zero(), col3 - col2); // Far plane
-
-		Frustum { left, right, bottom, top, near, far }
-	}*/
+		Frustum::new(&projection_matrix, &view_matrix)
+	}
 }
 
 #[repr(C)]
@@ -1216,7 +1203,7 @@ impl Matrix3
 		[
 			[ self.val[0][0], self.val[1][0], self.val[2][0] ],
 			[ self.val[0][1], self.val[1][1], self.val[2][1] ],
-			[ self.val[0][2], self.val[1][2], self.val[2][2] ],
+			[ self.val[0][2], self.val[1][2], self.val[2][2] ]
 		];
 
 		Self { val }
@@ -1540,6 +1527,24 @@ impl Matrix4
 			self.val[2][0], self.val[2][1], self.val[2][2], self.val[2][3],
 			self.val[3][0], self.val[3][1], self.val[3][2], self.val[3][3]
 		]
+	}
+}
+
+impl std::ops::Index<usize> for Matrix4
+{
+    type Output = [f32; 4];
+
+    fn index(&self, index: usize) -> &Self::Output
+	{
+        &self.val[index]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Matrix4
+{
+	fn index_mut(&mut self, index: usize) -> &mut Self::Output
+	{
+		&mut self.val[index]
 	}
 }
 
@@ -2009,32 +2014,173 @@ impl Plane
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub struct Frustum
 {
-	planes:	[Vector4; 6],
+	right: Plane,
+	left: Plane,
+	top: Plane,
+	bottom: Plane,
+	near: Plane,
+	far: Plane,
+	mvp: Matrix4,
+	projection_matrix: Matrix4,
+	view_matrix: Matrix4
 }
 
 impl Frustum
 {
-	pub fn new() -> Self
+	pub fn new(projection_matrix: &Matrix4, view_matrix: &Matrix4) -> Self
 	{
-		Self { planes: [Vector4::zero(); 6] }
+		let mvp = projection_matrix.mul(view_matrix);
+
+		let right = Plane
+		{
+			normal: Vector3
+			{
+				x: mvp[0][3] - mvp[0][0],
+				y: mvp[1][3] - mvp[1][0],
+                z: mvp[2][3] - mvp[2][0]
+			}.normalized(),
+			distance: mvp[3][3] - mvp[3][0],
+		};
+
+		let left = Plane
+		{
+			normal: Vector3
+			{
+                x: mvp[0][3] + mvp[0][0],
+                y: mvp[1][3] + mvp[1][0],
+                z: mvp[2][3] + mvp[2][0]
+            }.normalized(),
+            distance: mvp[3][3] + mvp[3][0]
+		};
+
+		let top = Plane
+		{
+			normal: Vector3
+			{
+                x: mvp[0][3] - mvp[0][1],
+                y: mvp[1][3] - mvp[1][1],
+                z: mvp[2][3] - mvp[2][1]
+            }.normalized(),
+			distance: mvp[3][3] - mvp[3][1]
+		};
+
+		let bottom = Plane
+		{
+			normal: Vector3
+			{
+                x: mvp[0][3] + mvp[0][1],
+                y: mvp[1][3] + mvp[1][1],
+                z: mvp[2][3] + mvp[2][1]
+            }.normalized(),
+            distance: mvp[3][3] + mvp[3][1]
+		};
+
+		let near = Plane
+		{
+			normal: Vector3
+			{
+                x: mvp[0][3] + mvp[0][2],
+                y: mvp[1][3] + mvp[1][2],
+                z: mvp[2][3] + mvp[2][2],
+            }.normalized(),
+            distance: mvp[3][3] + mvp[3][2]
+		};
+
+		let far = Plane
+		{
+			normal: Vector3
+			{
+                x: mvp[0][3] - mvp[0][2],
+                y: mvp[1][3] - mvp[1][2],
+                z: mvp[2][3] - mvp[2][2]
+            }.normalized(),
+            distance: mvp[3][3] - mvp[3][2]
+		};
+
+		Self { right, left, top, bottom, near, far, mvp, projection_matrix: *projection_matrix, view_matrix: *view_matrix }
+	}
+
+	fn transform_point(&self, point: &Vector3) -> Vector3
+	{
+		let mut point_matrix = Matrix4
+		{
+			val:
+			[
+				[ point.x, point.y, point.z, 1.0 ],
+				[ 0.0, 0.0, 0.0, 0.0 ],
+				[ 0.0, 0.0, 0.0, 0.0 ],
+				[ 0.0, 0.0, 0.0, 0.0 ]
+			]
+		};
+
+		let transformed_point_matrix = self.mvp.mul(&point_matrix.transpose());
+
+		Vector3
+		{
+			x: transformed_point_matrix[0][0] / transformed_point_matrix[0][3],
+			y: transformed_point_matrix[0][1] / transformed_point_matrix[0][3],
+			z: transformed_point_matrix[0][2] / transformed_point_matrix[0][3]
+		}
 	}
 
 	pub fn is_point_inside(&self, point: &Vector3) -> bool
 	{
-		for plane in self.planes
+		let point = self.transform_point(point);
+
+		// Test the right plane
+		if self.right.normal.x * point.x + self.right.normal.y * point.y + self.right.normal.z * point.z + self.right.distance > 0.0
 		{
-			let d: f32 = point.dot(&plane.xyz()) + plane.w;
-			if d > 0.0
-			{
-				return false;
-			}
+			return false;
+		}
+		// Test the left plane
+		if self.left.normal.x * point.x + self.left.normal.y * point.y + self.left.normal.z * point.z + self.left.distance > 0.0
+		{
+			return false;
+		}
+		// Test the top plane
+		if self.top.normal.x * point.x + self.top.normal.y * point.y + self.top.normal.z * point.z + self.top.distance > 0.0
+		{
+			return false;
+		}
+		// Test the bottom plane
+		if self.bottom.normal.x * point.x + self.bottom.normal.y * point.y + self.bottom.normal.z * point.z + self.bottom.distance > 0.0
+		{
+			return false;
+		}
+		if self.near.normal.x * point.x + self.near.normal.y * point.y + self.near.normal.z * point.z + self.near.distance > 0.0
+		{
+			return false;
+		}
+		// Test the far plane
+		if self.far.normal.x * point.x + self.far.normal.y * point.y + self.far.normal.z * point.z + self.far.distance > 0.0
+		{
+			return false;
 		}
 
 		true
 	}
 
-	pub fn is_aabb_inside(&self, bounding_box: &AxisAlignedBoundingBox) -> bool
+	pub fn is_aabb_inside(&self, aabb: &AxisAlignedBoundingBox) -> bool
 	{
 		todo!()
+	}
+}
+
+impl std::ops::Index<usize> for Frustum
+{
+	type Output = Plane;
+
+	fn index(&self, index: usize) -> &Self::Output
+	{
+		match index
+		{
+			0 => &self.right,
+			1 => &self.left,
+			2 => &self.top,
+			3 => &self.bottom,
+			4 => &self.near,
+			5 => &self.far,
+			_ => { panic!("Invalid index!"); }
+		}
 	}
 }
